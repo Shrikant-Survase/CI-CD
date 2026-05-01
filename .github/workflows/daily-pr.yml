@@ -35,9 +35,7 @@ jobs:
             open_prs.json)
 
           # Format PR list (clickable links)
-          TOP_PRS=$(jq -r \
-            '.[] | "• <\(.url)|#\(.number) \(.title)> by @\(.author.login)"' \
-            open_prs.json | head -5)
+          TOP_PRS=$(jq -r '.[] | "• <a href=\"\(.url)\">#\(.number) \(.title)</a> by @\(.author.login)"' open_prs.json | head -5)
 
           # Build Google Chat card JSON
           jq -n \
