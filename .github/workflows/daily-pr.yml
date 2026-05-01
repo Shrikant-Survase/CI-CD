@@ -2,7 +2,7 @@ name: PR Summary to Google Chat
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize]
+    types: [opened, reopened, synchronize,closed]
   workflow_dispatch:
 
 permissions:
@@ -22,26 +22,21 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           
+
       - name: Send summary to Google Chat
         run: |
-          OPEN_COUNT=$(jq '. | length' open_prs.json)
+          OPEN_COUNT=$(jq length open_prs.json)
 
           TODAY=$(date -u +%Y-%m-%d)
-          NEW_TODAY=$(jq -r --arg today "$TODAY" '.[] | select(.createdAt | startswith($today))' open_prs.json | wc -l)
+
+          NEW_TODAY=$(jq --arg today "$TODAY" '[.[] | select(.createdAt | startswith($today))] | length' open_prs.json)
 
           TOP_PRS=$(jq -r '.[] | "- #\(.number): \(.title) by @\(.author.login) \(.url)"' open_prs.json | head -5)
+           MESSAGE=$(printf "🚀 Daily PR Summary (%s)\n\n📊 Stats:\n• Open PRs: %s\n• New today: %s\n📋 Top PRs:\n%s\n🙏 Kindly review pending PRs!" \
+          "$TODAY" "$OPEN_COUNT" "$NEW_TODAY" "$TOP_PRS")
 
-          MESSAGE="🚀 Daily PR Summary ($(date -u '+%Y-%m-%d'))"
-          MESSAGE="$MESSAGE\n\n📊 Stats:"
-          MESSAGE="$MESSAGE\n• Open PRs: $OPEN_COUNT"
-          MESSAGE="$MESSAGE\n• New today: $NEW_TODAY"
-          MESSAGE="$MESSAGE\n\n📋 Top PRs:\n$TOP_PRS"
-          MESSAGE="$MESSAGE\n\n🙏 Kindly review pending PRs!"
-
-          # Safe JSON
           jq -n --arg text "$MESSAGE" '{text: $text}' > payload.json
-
-          curl -X POST \
+           curl -X POST \
             -H "Content-Type: application/json" \
             -d @payload.json \
             "${{ secrets.GOOGLE_CHAT_WEBHOOK }}"
