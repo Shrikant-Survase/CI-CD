@@ -3,6 +3,8 @@ name: Daily PR Summary to Google Chat
 on:
   schedule:
     - cron: '50 6 * * *'  # 6:50 AM UTC = 12:20 PM IST
+  pull_request:
+    types: [opened]       # 🔥 trigger when PR is created
 
 jobs:
   pr-summary:
@@ -14,7 +16,6 @@ jobs:
         
       - name: Fetch all PRs
         run: |
-          # Fetch all PRs including closed ones (last 30 days)
           gh pr list --state open --json number,title,author,url,createdAt,updatedAt,labels --limit 100 > open_prs.json
           gh pr list --state all --json number,title,author,url,createdAt,updatedAt,labels --limit 100 > all_prs.json
         env:
@@ -23,20 +24,16 @@ jobs:
       - name: Generate PR summary
         id: summary
         run: |
-          # Count open PRs
           OPEN_COUNT=$(jq '. | length' open_prs.json)
           
-          # Count PRs created/updated today
           TODAY=$(date -u +%Y-%m-%d)
           NEW_TODAY=$(jq -r --arg today "$TODAY" '.[] | select(.createdAt | startswith($today)) | .number' open_prs.json | wc -l)
           UPDATED_TODAY=$(jq -r --arg today "$TODAY" '.[] | select(.updatedAt | startswith($today)) | .number' open_prs.json | wc -l)
           
-          # Get oldest open PR
           OLDEST_PR=$(jq -r 'map({createdAt: .createdAt, number: .number, title: .title, url: .url}) | min_by(.createdAt) | "\(.number): \(.title) [\(.url)]"' open_prs.json)
           
-          # Create summary message
           MESSAGE=$(cat << EOF | jq -Rs .
-🚀 *Daily PR Summary* ($(date -u '+%Y-%m-%d'))
+🚀 *PR Summary* ($(date -u '+%Y-%m-%d'))
 
 📊 *Stats:*
 • Open PRs: **$OPEN_COUNT**
@@ -46,12 +43,10 @@ jobs:
 🔥 *Oldest Open PR:*
 $OLDEST_PR
 
-📋 *All Open PRs:*
+📋 *Top Open PRs:*
 $(jq -r '.[] | "- #\(.number): \(.title) by @\(.author.login) [\(.url)]"' open_prs.json | head -10)
 
-👀 *Full list:* https://github.com/${{ github.repository }}/pulls?q=is%3Aopen+is%3Apr
-
-🙏 Please review pending PRs!
+🙏 Kindly review pending PRs!
 EOF
           )
           
