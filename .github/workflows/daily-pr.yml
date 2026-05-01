@@ -2,7 +2,7 @@ name: PR Summary to Google Chat
 
 on:
   pull_request:
-    types: [opened, reopened, synchronize,closed]
+    types: [opened, reopened, synchronize, closed]
   workflow_dispatch:
 
 permissions:
@@ -12,31 +12,81 @@ permissions:
 jobs:
   pr-summary:
     runs-on: ubuntu-latest
-    
+
     steps:
-      - uses: actions/checkout@v4
-        
-      - name: Fetch PRs
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Fetch open PRs
         run: |
-          gh pr list --state open --json number,title,author,url,createdAt,updatedAt --limit 100 > open_prs.json
+          gh pr list --state open \
+            --json number,title,author,url,createdAt,updatedAt \
+            --limit 100 > open_prs.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
 
-      - name: Send summary to Google Chat
+      - name: Send formatted card to Google Chat
         run: |
           OPEN_COUNT=$(jq length open_prs.json)
-
           TODAY=$(date -u +%Y-%m-%d)
 
-          NEW_TODAY=$(jq --arg today "$TODAY" '[.[] | select(.createdAt | startswith($today))] | length' open_prs.json)
+          NEW_TODAY=$(jq --arg today "$TODAY" \
+            '[.[] | select(.createdAt | startswith($today))] | length' \
+            open_prs.json)
 
-          TOP_PRS=$(jq -r '.[] | "- #\(.number): \(.title) by @\(.author.login) \(.url)"' open_prs.json | head -5)
-           MESSAGE=$(printf "🚀 Daily PR Summary (%s)\n\n📊 Stats:\n• Open PRs: %s\n• New today: %s\n📋 Top PRs:\n%s\n🙏 Kindly review pending PRs!" \
-          "$TODAY" "$OPEN_COUNT" "$NEW_TODAY" "$TOP_PRS")
+          # Format PR list (clickable links)
+          TOP_PRS=$(jq -r \
+            '.[] | "• <\(.url)|#\(.number) \(.title)> by @\(.author.login)"' \
+            open_prs.json | head -5)
 
-          jq -n --arg text "$MESSAGE" '{text: $text}' > payload.json
-           curl -X POST \
+          # Build Google Chat card JSON
+          jq -n \
+            --arg date "$TODAY" \
+            --arg open "$OPEN_COUNT" \
+            --arg new "$NEW_TODAY" \
+            --arg prs "$TOP_PRS" \
+            '{
+              cards: [
+                {
+                  header: {
+                    title: "🚀 Daily PR Summary",
+                    subtitle: $date
+                  },
+                  sections: [
+                    {
+                      widgets: [
+                        {
+                          textParagraph: {
+                            text: "<b>📊 Stats</b><br/>Open PRs: <b>\($open)</b><br/>New today: <b>\($new)</b>"
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      header: "📋 Top PRs",
+                      widgets: [
+                        {
+                          textParagraph: {
+                            text: $prs
+                          }
+                        }
+                      ]
+                    },
+                    {
+                      widgets: [
+                        {
+                          textParagraph: {
+                            text: "🙏 <i>Kindly review pending PRs</i>"
+                          }
+                        }
+                      ]
+                    }
+                  ]
+                }
+              ]
+            }' > payload.json
+
+          curl -X POST \
             -H "Content-Type: application/json" \
             -d @payload.json \
             "${{ secrets.GOOGLE_CHAT_WEBHOOK }}"
