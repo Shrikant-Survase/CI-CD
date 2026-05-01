@@ -1,63 +1,46 @@
-name: Daily PR Summary to Google Chat
+name: PR Summary to Google Chat
 
 on:
-  schedule:
-    - cron: '50 6 * * *'  # 6:50 AM UTC = 12:20 PM IST
   pull_request:
-    types: [opened]       # 🔥 trigger when PR is created
+    types: [opened, reopened, synchronize]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
 
 jobs:
   pr-summary:
     runs-on: ubuntu-latest
-    
+
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        
-      - name: Fetch all PRs
+      - uses: actions/checkout@v4
+
+      - name: Fetch open PRs
         run: |
-          gh pr list --state open --json number,title,author,url,createdAt,updatedAt,labels --limit 100 > open_prs.json
-          gh pr list --state all --json number,title,author,url,createdAt,updatedAt,labels --limit 100 > all_prs.json
+          gh pr list --state open --json number,title,author,url,createdAt,updatedAt --limit 100 > open_prs.json
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          
-      - name: Generate PR summary
-        id: summary
+
+      - name: Send to Google Chat
         run: |
           OPEN_COUNT=$(jq '. | length' open_prs.json)
-          
+
           TODAY=$(date -u +%Y-%m-%d)
-          NEW_TODAY=$(jq -r --arg today "$TODAY" '.[] | select(.createdAt | startswith($today)) | .number' open_prs.json | wc -l)
-          UPDATED_TODAY=$(jq -r --arg today "$TODAY" '.[] | select(.updatedAt | startswith($today)) | .number' open_prs.json | wc -l)
-          
-          OLDEST_PR=$(jq -r 'map({createdAt: .createdAt, number: .number, title: .title, url: .url}) | min_by(.createdAt) | "\(.number): \(.title) [\(.url)]"' open_prs.json)
-          
-          MESSAGE=$(cat << EOF | jq -Rs .
-🚀 *PR Summary* ($(date -u '+%Y-%m-%d'))
+          NEW_TODAY=$(jq -r --arg today "$TODAY" '.[] | select(.createdAt | startswith($today))' open_prs.json | wc -l)
 
-📊 *Stats:*
-• Open PRs: **$OPEN_COUNT**
-• New today: **$NEW_TODAY**
-• Updated today: **$UPDATED_TODAY**
+          TOP_PRS=$(jq -r '.[] | "- #\(.number): \(.title) by @\(.author.login) \(.url)"' open_prs.json | head -5)
 
-🔥 *Oldest Open PR:*
-$OLDEST_PR
+          MESSAGE="🚀 PR Summary ($(date -u '+%Y-%m-%d'))"
+          MESSAGE="$MESSAGE\n\nOpen PRs: $OPEN_COUNT"
+          MESSAGE="$MESSAGE\nNew Today: $NEW_TODAY"
+          MESSAGE="$MESSAGE\n\nTop PRs:\n$TOP_PRS"
+          MESSAGE="$MESSAGE\n\n🙏 Kindly review pending PRs!"
 
-📋 *Top Open PRs:*
-$(jq -r '.[] | "- #\(.number): \(.title) by @\(.author.login) [\(.url)]"' open_prs.json | head -10)
+          # Safe JSON creation
+          jq -n --arg text "$MESSAGE" '{text: $text}' > payload.json
 
-🙏 Kindly review pending PRs!
-EOF
-          )
-          
-          echo "message=$MESSAGE" >> $GITHUB_OUTPUT
-          
-      - name: Send summary to Google Chat
-        if: steps.summary.outputs.message != ''
-        run: |
           curl -X POST \
-          -H "Content-Type: application/json" \
-          -d "{
-            \"text\": ${{ steps.summary.outputs.message }}
-          }" \
-          "${{ secrets.GOOGLE_CHAT_WEBHOOK }}"
+            -H "Content-Type: application/json" \
+            -d @payload.json \
+            "${{ secrets.GOOGLE_CHAT_WEBHOOK }}"
